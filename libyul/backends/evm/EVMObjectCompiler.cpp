@@ -64,7 +64,12 @@ void EVMObjectCompiler::run(Object& _object, bool _optimize)
 	yulAssert(_object.analysisInfo, "No analysis info.");
 	yulAssert(_object.code, "No code.");
 	if (_optimize && m_dialect.evmVersion() > langutil::EVMVersion::homestead())
-		OptimizedEVMCodeTransform::run(m_assembly, *_object.analysisInfo, *_object.code, m_dialect, context);
+	{
+
+		auto stackErrors = OptimizedEVMCodeTransform::run(m_assembly, *_object.analysisInfo, *_object.code, m_dialect, context);
+		if (!stackErrors.empty())
+			BOOST_THROW_EXCEPTION(stackErrors.front());
+	}
 	else
 	{
 		// We do not catch and re-throw the stack too deep exception here because it is a YulException,

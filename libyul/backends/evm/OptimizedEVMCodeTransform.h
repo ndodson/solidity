@@ -21,9 +21,10 @@
 
 #pragma once
 
+#include <libyul/AST.h>
 #include <libyul/backends/evm/EVMDialect.h>
 #include <libyul/backends/evm/ControlFlowGraph.h>
-#include <libyul/AST.h>
+#include <libyul/Exceptions.h>
 #include <libyul/Scope.h>
 
 #include <optional>
@@ -42,7 +43,7 @@ struct StackLayout;
 class OptimizedEVMCodeTransform
 {
 public:
-	static void run(
+	[[nodiscard]] static std::vector<StackTooDeepError> run(
 		AbstractAssembly& _assembly,
 		AsmAnalysisInfo& _analysisInfo,
 		Block const& _block,
@@ -85,6 +86,8 @@ public:
 	/// @a _targetStack as argument while m_stack was @a _stack.
 	static Stack tryCreateStackLayout(Stack _stack, Stack const& _targetStack, std::vector<VariableSlot> const& _currentFunctionReturnVariables);
 
+	std::vector<StackTooDeepError> const& stackErrors() const { return m_stackErrors; }
+
 private:
 	/// Assert that @a _slot contains the value of @a _expression.
 	static void validateSlot(StackSlot const& _slot, Expression const& _expression);
@@ -105,6 +108,7 @@ private:
 	/// contain a jump label for it.
 	std::set<CFG::BasicBlock const*> m_generated;
 	CFG::FunctionInfo const* m_currentFunctionInfo = nullptr;
+	std::vector<StackTooDeepError> m_stackErrors;
 };
 
 }

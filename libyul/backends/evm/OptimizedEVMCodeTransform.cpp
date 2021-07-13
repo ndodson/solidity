@@ -325,38 +325,45 @@ Stack OptimizedEVMCodeTransform::tryCreateStackLayout(Stack _currentStack, Stack
 
 void OptimizedEVMCodeTransform::createStackLayout(Stack _targetStack)
 {
-	if (
-		auto unreachable = tryCreateStackLayout(m_stack, _targetStack, m_currentFunctionInfo ? m_currentFunctionInfo->returnVariables : vector<VariableSlot>{});
-		!unreachable.empty()
-	)
-	{
-		yulAssert(false, "Stack too deep."); // Make this a hard failure for now to focus on avoiding it earlier.
-#if 0
-		// TODO: check if we can do better.
-		// Maybe switching to a general "fix everything deep first" algorithm.
-		// Or we just let these cases, that weren't fixed in the StackLayoutGenerator go through and report the
-		// need for stack limit evasion for these cases instead.
-		std::map<unsigned, StackSlot> slotsByDepth;
-		for (auto slot: _targetStack)
-			if (auto offset = util::findOffset(m_stack | ranges::views::reverse | ranges::to<Stack>, slot))
-				slotsByDepth.insert(std::make_pair(*offset, slot));
-		for (auto slot: slotsByDepth | ranges::views::reverse | ranges::views::values)
-			if (!util::findOffset(temporaryStack, slot))
-			{
-				auto offset = util::findOffset(m_stack | ranges::views::reverse | ranges::to<Stack>, slot);
-				m_stack.emplace_back(slot);
-				m_assembly.appendInstruction(evmasm::dupInstruction(static_cast<unsigned>(*offset + 1)));
-			}
-
-		temporaryStack = m_stack | ranges::views::drop(commonPrefix.size()) | ranges::to<Stack>;
-#endif
-	}
-
+	static constexpr auto slotVariableName = [](StackSlot const& _slot) {
+		return std::visit(util::GenericVisitor{
+			[](VariableSlot const& _var) { return _var.variable.get().name; },
+			[](auto const&) { return YulString{}; }
+		}, _slot);
+	};
 
 	::createStackLayout(m_stack, _targetStack | ranges::to<Stack>, [&](unsigned _i) {
-		m_assembly.appendInstruction(evmasm::swapInstruction(_i));
+		yulAssert(_i > 0, "");
+		if (_i > 16)
+		{
+			int deficit = static_cast<int>(_i - 16);
+			StackSlot const& deepSlot = m_stack.at(m_stack.size() - _i - 1);
+			YulString varNameDeep = slotVariableName(deepSlot);
+			YulString varNameTop = slotVariableName(m_stack.back());
+			string msg = "Cannot swap " + (varNameDeep.empty() ? "Slot " + stackSlotToString(deepSlot) : "Variable " + varNameDeep.str()) +
+				" with " + (varNameTop.empty() ? "Slot " + stackSlotToString(m_stack.back()) : "Variable " + varNameTop.str()) +
+				": too deep in the stack by " + to_string(deficit) + " slots in " + stackToString(m_stack);
+			m_stackErrors.emplace_back(StackTooDeepError(
+				m_currentFunctionInfo ? m_currentFunctionInfo->function.name : YulString{},
+				varNameDeep.empty() ? varNameTop : varNameDeep,
+				deficit,
+				msg
+			));
+			for (auto const& slot: m_stack | ranges::views::drop(m_stack.size() - _i - 1))
+				if (VariableSlot const* var = get_if<VariableSlot>(&slot))
+					m_stackErrors.emplace_back(StackTooDeepError(
+						m_currentFunctionInfo ? m_currentFunctionInfo->function.name : YulString{},
+						var->variable.get().name,
+						deficit,
+						msg
+					));
+
+			m_assembly.markAsInvalid();
+		}
+		else
+			m_assembly.appendInstruction(evmasm::swapInstruction(_i));
 	}, [&](StackSlot const& _slot) {
-		if (auto depth = util::findOffset(m_stack | ranges::views::reverse, _slot); depth && *depth < 16)
+		if (auto depth = util::findOffset(m_stack | ranges::views::reverse, _slot))
 		{
 			if (*depth < 16)
 			{
@@ -364,7 +371,29 @@ void OptimizedEVMCodeTransform::createStackLayout(Stack _targetStack)
 				return;
 			}
 			else if (!canBeFreelyGenerated(_slot))
-				yulAssert(false, "Stack too deep.");
+			{
+				int deficit = static_cast<int>(*depth - 15);
+				YulString varName = slotVariableName(_slot);
+				string msg = (varName.empty() ? "Slot " + stackSlotToString(_slot) : "Variable " + varName.str())
+					+ " is " + to_string(*depth - 15) + " too deep in the stack " + stackToString(m_stack);
+				m_stackErrors.emplace_back(StackTooDeepError(
+					m_currentFunctionInfo ? m_currentFunctionInfo->function.name : YulString{},
+					varName,
+					deficit,
+					msg
+				));
+				for (auto const& slot: m_stack | ranges::views::drop(m_stack.size() - *depth))
+					if (VariableSlot const* var = get_if<VariableSlot>(&slot))
+						m_stackErrors.emplace_back(StackTooDeepError(
+							m_currentFunctionInfo ? m_currentFunctionInfo->function.name : YulString{},
+							var->variable.get().name,
+							deficit,
+							msg
+						));
+				m_assembly.markAsInvalid();
+				m_assembly.appendConstant(u256(0xDEADBEEF));
+				return;
+			}
 		}
 		std::visit(util::GenericVisitor{
 			[&](LiteralSlot const& _literal)
@@ -420,7 +449,7 @@ void OptimizedEVMCodeTransform::createStackLayout(Stack _targetStack)
 	}, [&]() { m_assembly.appendInstruction(evmasm::Instruction::POP); });
 }
 
-void OptimizedEVMCodeTransform::run(
+vector<StackTooDeepError> OptimizedEVMCodeTransform::run(
 	AbstractAssembly& _assembly,
 	AsmAnalysisInfo& _analysisInfo,
 	Block const& _block,
@@ -436,4 +465,5 @@ void OptimizedEVMCodeTransform::run(
 	optimizedCodeTransform(*dfg->entry);
 	for (Scope::Function const* function: dfg->functions)
 		optimizedCodeTransform(dfg->functionInfo.at(function));
+	return optimizedCodeTransform.stackErrors();
 }
