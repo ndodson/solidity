@@ -64,7 +64,6 @@ AbstractAssembly::LabelID OptimizedEVMCodeTransform::getFunctionLabel(Scope::Fun
 {
 	CFG::FunctionInfo const& functionInfo = m_dfg.functionInfo.at(&_function);
 	if (!m_functionLabels.count(&functionInfo))
-	{
 		m_functionLabels[&functionInfo] = m_useNamedLabelsForFunctions ?
 			m_assembly.namedLabel(
 				functionInfo.function.name.str(),
@@ -72,7 +71,6 @@ AbstractAssembly::LabelID OptimizedEVMCodeTransform::getFunctionLabel(Scope::Fun
 				functionInfo.function.returns.size(),
 				{}
 			) : m_assembly.newLabelId();
-	}
 	return m_functionLabels[&functionInfo];
 }
 
@@ -85,11 +83,14 @@ void OptimizedEVMCodeTransform::validateSlot(StackSlot const& _slot, Expression 
 		},
 		[&](yul::Identifier const& _identifier) {
 			auto* variableSlot = get_if<VariableSlot>(&_slot);
+			// TODO: Strictly speaking this would need scope tracking and compare the actual Scope::Variable.
+			//       Not sure that is worth the additional complication. Alternatively, we can still pre-disambiguate
+			//       the Yul AST.
 			yulAssert(variableSlot && variableSlot->variable.get().name == _identifier.name, "");
 		},
 		[&](yul::FunctionCall const& _call) {
 			auto* temporarySlot = get_if<TemporarySlot>(&_slot);
-			yulAssert(temporarySlot && &temporarySlot->call.get() == &_call, "");
+			yulAssert(temporarySlot && &temporarySlot->call.get() == &_call && temporarySlot->index == 0, "");
 		}
 	}, _expression);
 }
@@ -123,6 +124,7 @@ void OptimizedEVMCodeTransform::operator()(CFG::FunctionInfo const& _functionInf
 void OptimizedEVMCodeTransform::operator()(CFG::FunctionCall const& _call)
 {
 	yulAssert(m_stack.size() >= _call.function.get().arguments.size() + 1, "");
+	yulAssert(m_assembly.stackHeight() == static_cast<int>(m_stack.size()), "");
 	auto returnLabel = m_returnLabels.at(&_call.functionCall.get());
 
 	// Assert that we got a correct arguments on stack for the call.
@@ -157,6 +159,7 @@ void OptimizedEVMCodeTransform::operator()(CFG::FunctionCall const& _call)
 void OptimizedEVMCodeTransform::operator()(CFG::BuiltinCall const& _call)
 {
 	yulAssert(m_stack.size() >= _call.arguments, "");
+	yulAssert(m_assembly.stackHeight() == static_cast<int>(m_stack.size()), "");
 	// Assert that we got a correct stack for the call.
 	for (auto&& [arg, slot]: ranges::zip_view(
 		_call.functionCall.get().arguments | ranges::views::enumerate |
@@ -182,6 +185,7 @@ void OptimizedEVMCodeTransform::operator()(CFG::BuiltinCall const& _call)
 
 void OptimizedEVMCodeTransform::operator()(CFG::Assignment const& _assignment)
 {
+	yulAssert(m_assembly.stackHeight() == static_cast<int>(m_stack.size()), "");
 	for (auto& currentSlot: m_stack)
 		if (VariableSlot const* varSlot = get_if<VariableSlot>(&currentSlot))
 			if (util::findOffset(_assignment.variables, *varSlot))
@@ -193,8 +197,8 @@ void OptimizedEVMCodeTransform::operator()(CFG::Assignment const& _assignment)
 
 void OptimizedEVMCodeTransform::operator()(CFG::BasicBlock const& _block)
 {
-	if (!m_generated.insert(&_block).second)
-		return;
+	// Assert that this is the first visit of the block.
+	yulAssert(m_generated.insert(&_block).second, "");
 
 	auto const& blockInfo = m_stackLayout.blockInfos.at(&_block);
 
@@ -208,15 +212,25 @@ void OptimizedEVMCodeTransform::operator()(CFG::BasicBlock const& _block)
 	for (auto const& operation: _block.operations)
 	{
 		createStackLayout(m_stackLayout.operationEntryLayout.at(&operation));
+		yulAssert(m_stack.size() >= operation.input.size(), "");
+		size_t baseHeight = m_stack.size() - operation.input.size();
+		assertLayoutCompatibility(
+			m_stack | ranges::views::take_last(operation.input.size()) | ranges::to<Stack>,
+			operation.input
+		);
 		std::visit(*this, operation.operation);
+		yulAssert(m_stack.size() == baseHeight + operation.output.size(), "");
+		yulAssert(m_stack.size() >= operation.output.size(), "");
+		assertLayoutCompatibility(
+			m_stack | ranges::views::take_last(operation.output.size()) | ranges::to<Stack>,
+			operation.output
+		);
 	}
 
 	std::visit(util::GenericVisitor{
 		[&](CFG::BasicBlock::MainExit const&)
 		{
 			m_assembly.appendInstruction(evmasm::Instruction::STOP);
-			m_assembly.setStackHeight(0);
-			m_stack.clear();
 		},
 		[&](CFG::BasicBlock::Jump const& _jump)
 		{
@@ -233,8 +247,9 @@ void OptimizedEVMCodeTransform::operator()(CFG::BasicBlock const& _block)
 				if (!m_blockLabels.count(_jump.target))
 					m_blockLabels[_jump.target] = m_assembly.newLabelId();
 
-				m_assembly.appendJumpTo(m_blockLabels[_jump.target]);
-				if (!m_generated.count(_jump.target))
+				if (m_generated.count(_jump.target))
+					m_assembly.appendJumpTo(m_blockLabels[_jump.target]);
+				else
 					(*this)(*_jump.target);
 			}
 		},
@@ -243,6 +258,8 @@ void OptimizedEVMCodeTransform::operator()(CFG::BasicBlock const& _block)
 			createStackLayout(blockInfo.exitLayout);
 			if (!m_blockLabels.count(_conditionalJump.nonZero))
 				m_blockLabels[_conditionalJump.nonZero] = m_assembly.newLabelId();
+			yulAssert(!m_stack.empty(), "");
+			yulAssert(m_stack.back() == _conditionalJump.condition, "");
 			m_assembly.appendJumpToIf(m_blockLabels[_conditionalJump.nonZero]);
 			m_stack.pop_back();
 
@@ -279,16 +296,17 @@ void OptimizedEVMCodeTransform::operator()(CFG::BasicBlock const& _block)
 			createStackLayout(exitStack);
 			m_assembly.setSourceLocation(locationOf(*m_currentFunctionInfo));
 			m_assembly.appendJump(0, AbstractAssembly::JumpType::OutOfFunction); // TODO: stack height diff.
-			m_assembly.setStackHeight(0);
-			m_stack.clear();
-
 		},
 		[&](CFG::BasicBlock::Terminated const&)
 		{
-			m_assembly.setStackHeight(0);
-			m_stack.clear();
+			yulAssert(!_block.operations.empty(), "");
+			CFG::BuiltinCall const* builtinCall = get_if<CFG::BuiltinCall>(&_block.operations.back().operation);
+			yulAssert(builtinCall && builtinCall->builtin.get().controlFlowSideEffects.terminates, "");
 		}
 	}, _block.exit);
+	// TODO: we could assert that the last emitted assembly item terminated or was an (unconditional) jump.
+	m_stack.clear();
+	m_assembly.setStackHeight(0);
 }
 
 // TODO: It may or may not be nicer to merge this with createStackLayout (e.g. by adding an option to it that
@@ -332,6 +350,8 @@ void OptimizedEVMCodeTransform::createStackLayout(Stack _targetStack)
 		}, _slot);
 	};
 
+	yulAssert(m_assembly.stackHeight() == static_cast<int>(m_stack.size()), "");
+	// ::createStack asserts that it has achieved the target layout.
 	::createStackLayout(m_stack, _targetStack | ranges::to<Stack>, [&](unsigned _i) {
 		yulAssert(_i > 0, "");
 		if (_i > 16)
@@ -447,6 +467,7 @@ void OptimizedEVMCodeTransform::createStackLayout(Stack _targetStack)
 			}
 		}, _slot);
 	}, [&]() { m_assembly.appendInstruction(evmasm::Instruction::POP); });
+	yulAssert(m_assembly.stackHeight() == static_cast<int>(m_stack.size()), "");
 }
 
 vector<StackTooDeepError> OptimizedEVMCodeTransform::run(

@@ -69,6 +69,9 @@ private:
 	/// Generate code for the given block @a _block.
 	/// Expects the current stack layout m_stack to be a stack layout that is compatible with the
 	/// entry layout expected by the block.
+	/// Recursively generates code for blocks that are jumped to.
+	/// The last emitted assembly instruction is always an unconditional jump or terminating.
+	/// Always exits with an empty stack layout.
 	void operator()(CFG::BasicBlock const& _block);
 
 	/// Generate code for the given function.
