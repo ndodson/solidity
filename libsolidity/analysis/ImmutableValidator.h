@@ -48,6 +48,7 @@ public:
 	void analyze();
 
 private:
+	bool visit(Assignment const& _assignment);
 	bool visit(FunctionDefinition const& _functionDefinition);
 	bool visit(ModifierDefinition const& _modifierDefinition);
 	bool visit(MemberAccess const& _memberAccess);
