@@ -103,7 +103,7 @@ void OptimizedEVMCodeTransform::operator()(CFG::FunctionInfo const& _functionInf
 	Stack const& entryLayout = m_stackLayout.blockInfos.at(_functionInfo.entry).entryLayout;
 
 	m_stack.clear();
-	m_stack.emplace_back(FunctionReturnLabelSlot{});
+	m_stack.emplace_back(FunctionReturnLabelSlot{_functionInfo.function});
 	for (auto const& param: _functionInfo.parameters | ranges::views::reverse)
 		m_stack.emplace_back(param);
 	m_assembly.setStackHeight(static_cast<int>(m_stack.size()));
@@ -291,7 +291,7 @@ void OptimizedEVMCodeTransform::operator()(CFG::BasicBlock const& _block)
 			Stack exitStack = m_currentFunctionInfo->returnVariables | ranges::views::transform([](auto const& _varSlot){
 				return StackSlot{_varSlot};
 			}) | ranges::to<Stack>;
-			exitStack.emplace_back(FunctionReturnLabelSlot{});
+			exitStack.emplace_back(FunctionReturnLabelSlot{_functionReturn.info->function});
 
 			createStackLayout(exitStack);
 			m_assembly.setSourceLocation(locationOf(*m_currentFunctionInfo));
