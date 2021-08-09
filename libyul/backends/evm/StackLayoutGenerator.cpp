@@ -534,6 +534,9 @@ Stack StackLayoutGenerator::combineStack(Stack const& _stack1, Stack const& _sta
 
 void StackLayoutGenerator::fixStackTooDeep(CFG::BasicBlock const& _block)
 {
+#if 1
+	(void)_block;
+#else
 	// This is just an initial proof of concept. Doing this in a clever way and in all cases will take some doing.
 	// It might be enough to keep it at fixing inner-block issues and leave inter-block issues to the stack limit
 	// evader.
@@ -635,8 +638,8 @@ void StackLayoutGenerator::fixStackTooDeep(CFG::BasicBlock const& _block)
 			[&](CFG::BasicBlock::FunctionReturn const&) {},
 			[&](CFG::BasicBlock::Terminated const&) { },
 		}, _block->exit);
-
 	});
+#endif
 }
 
 Stack StackLayoutGenerator::compressStack(Stack _stack)
