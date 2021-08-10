@@ -63,8 +63,8 @@ contract C {
 // test_bytes() ->
 // gas irOptimized: 377266
 // gas legacy: 423563
-// gas legacyOptimized: 331391
+// gas legacyOptimized: 319079
 // test_uint256() ->
 // gas irOptimized: 528258
 // gas legacy: 591392
-// gas legacyOptimized: 456137
+// gas legacyOptimized: 440087
