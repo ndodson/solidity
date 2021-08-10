@@ -49,7 +49,6 @@ public:
 		Block const& _block,
 		EVMDialect const& _dialect,
 		BuiltinContext& _builtinContext,
-		ExternalIdentifierAccess const& _identifierAccess = ExternalIdentifierAccess(),
 		bool _useNamedLabelsForFunctions = false
 	);
 private:

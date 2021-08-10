@@ -108,8 +108,6 @@ void OptimizedEVMCodeTransform::operator()(CFG::FunctionInfo const& _functionInf
 		m_stack.emplace_back(param);
 	m_assembly.setStackHeight(static_cast<int>(m_stack.size()));
 	m_assembly.setSourceLocation(locationOf(_functionInfo));
-	if (!m_functionLabels.count(&_functionInfo))
-		m_functionLabels[&_functionInfo] = m_assembly.newLabelId();
 
 	m_assembly.appendLabel(getFunctionLabel(_functionInfo.function));
 	createStackLayout(entryLayout);
@@ -476,7 +474,6 @@ vector<StackTooDeepError> OptimizedEVMCodeTransform::run(
 	Block const& _block,
 	EVMDialect const& _dialect,
 	BuiltinContext& _builtinContext,
-	ExternalIdentifierAccess const&,
 	bool _useNamedLabelsForFunctions
 )
 {
