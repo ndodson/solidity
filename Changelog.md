@@ -12,9 +12,9 @@ Compiler Features:
  * SMTChecker: Add constraints to better correlate ``address(this).balance`` and ``msg.value``.
  * Commandline Interface: Disallowed the ``--experimental-via-ir`` option to be used with Standard Json, Assembler and Linker modes.
 
-
 Bugfixes:
- * SMTChecker: Fix false negative caused by ``push`` on storage array references returned by internal functions.
+conflict conflict conflict
+* SMTChecker: Fix false negative caused by ``push`` on storage array references returned by internal functions.
  * SMTChecker: Fix false positive in external calls from constructors.
  * SMTChecker: Fix internal error on some multi-source uses of ``abi.*``, cryptographic functions and constants.
  * Type Checker: Disallow modifier declarations and definitions in interfaces.
